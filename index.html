@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.8/dist/web/variable/pretendardvariable.css" />
+  <style>
+    :root { --bg: #f8fafc; --sidebar: #0f172a; --primary: #3b82f6; --sidebar-width: 250px; }
+    body { font-family: 'Pretendard Variable', sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+    .sidebar { width: var(--sidebar-width); background: var(--sidebar); color: #fff; overflow-y: auto; flex-shrink: 0; padding-top: 20px; }
+    .main-content { flex-grow: 1; padding: 25px; overflow-y: auto; height: 100vh; }
+    
+    /* 🌟 세그먼트 필터 스타일 */
+    .segment-filter { display: flex; gap: 4px; padding: 0 15px 15px 15px; border-bottom: 1px solid #334155; margin-bottom: 10px; }
+    .seg-btn { flex: 1; padding: 5px 0; font-size: 0.8rem; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; color: #fff; opacity: 0.6; transition: 0.2s; }
+    .seg-btn.active { opacity: 1; outline: 2px solid #fff; outline-offset: -2px; }
+    
+    .nav-link { color: #cbd5e1; padding: 8px 15px; cursor: pointer; transition: 0.2s; font-size: 0.95rem; }
+    .nav-link:hover, .nav-link.active { background: #1e293b; color: #fff; }
+    .section-header { font-weight: 800; color: #94a3b8; font-size: 0.8rem; padding: 15px 15px 5px 15px; text-transform: uppercase; }
+    .tree-unit { padding-left: 5px; margin-left: 10px; border-left: 2px solid #334155; }
+    .tree-team { font-size: 0.85rem; padding: 5px 10px; color: #f8fafc; opacity: 0.8; cursor: pointer; }
+    .tree-team:hover { opacity: 1; color: var(--primary); }
+    
+    .card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; background: #fff; }
+    .table-container { overflow-x: auto; white-space: nowrap; }
+    .cell-past { background-color: #f1f5f9; color: #64748b; cursor: pointer; }
+    .cell-current { background-color: #eff6ff; font-weight: bold; border-left: 2px solid var(--primary); border-right: 2px solid var(--primary); cursor: pointer; }
+    .cell-future { cursor: pointer; transition: 0.2s; }
+    .cell-past:hover, .cell-future:hover { background-color: #dbeafe; }
+    .mm-full { color: #10b981; font-weight: bold; }
+    .mm-warn { color: #f59e0b; font-weight: bold; }
+    .sga-count { cursor: pointer; text-decoration: underline; color: var(--primary); font-weight: bold; }
+    .pivot-row:hover { background-color: #f1f5f9; }
+    .toggle-icon { display: inline-block; width: 24px; text-align: center; color: #64748b; cursor: pointer; user-select: none; }
+    .toggle-icon:hover { color: var(--primary); }
+    .org-link { cursor: pointer; color: #1e293b; }
+    .org-link:hover { color: var(--primary); text-decoration: underline; }
+    
+    .debug-box { background: #1e293b; color: #10b981; padding: 10px; font-size: 0.75rem; border-radius: 6px; max-height: 150px; overflow-y: auto; display: none; }
+
+    .header-cos { 
+      background-color: #eff6ff !important; /* 연한 파랑 배경 */
+      color: #1d4ed8 !important;            /* 진한 파랑 글자 */
+      border-left: 5px solid #3b82f6 !important; 
+    }
+
+    .header-shared { 
+      background-color: #f0fdf4 !important; /* 연한 초록 배경 */
+      color: #15803d !important;            /* 진한 초록 글자 */
+      border-left: 5px solid #10b981 !important; 
+    }
+
+    .header-out { 
+      background-color: #f8fafc !important; /* 연한 회색 배경 */
+      color: #475569 !important; 
+      border-left: 5px solid #94a3b8 !important;
+    }
+    .header-leave { 
+      background-color: #fff7ed !important; /* 연한 주황 배경 */
+      color: #9a3412 !important;            /* 진한 주황 글자 */
+      border-left: 5px solid #f97316 !important; 
+    }
+
+    .header-sga { 
+      background-color: #f1f5f9 !important; /* 연한 회색 배경 */
+      color: #475569 !important;            /* 진한 회색 글자 */
+      border-left: 5px solid #94a3b8 !important; 
+    }
+
+  </style>
+</head>
+<body>
+  
+  <div class="sidebar">
+
+    <div class="nav-link active" onclick="showHome()">🏠 홈 대시보드</div>
+
+    <div class="nav-link" onclick="toggleGlobalDebug()">🛠 디버그 콘솔</div>
+    
+    <div class="segment-filter">
+      <button class="seg-btn active" style="background:#475569;" onclick="applySegment('전체', this)">전체</button>
+      <button class="seg-btn" style="background:#3b82f6;" onclick="applySegment('DTC', this)">DTC</button>
+      <button class="seg-btn" style="background:#10b981;" onclick="applySegment('GTC', this)">GTC</button>
+      <button class="seg-btn" style="background:#8b5cf6;" onclick="applySegment('ITC', this)">ITC</button>
+    </div>
+
+    <div id="orgTree"></div>
+  </div>
+
+  <div class="main-content">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h3 id="pageTitle" class="m-0 fw-bold">홈 대시보드</h3>
+      <div class="d-flex gap-2">
+        <select id="selYear" class="form-select w-auto" onchange="loadData()"></select>
+        <select id="selMonth" class="form-select w-auto" onchange="loadData()"></select>
+      </div>
+    </div>
+
+    <div id="homeView">
+      <div class="card p-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="fw-bold mb-0">
+            📈 <span id="currentChartFilterLabel" class="badge bg-primary fs-6">전사</span> 투입 트렌드 (2026년)
+          </h6>
+          <button class="btn btn-sm btn-outline-secondary fw-bold" onclick="applyChartFilter('전사')">필터 해제 (전사 보기)</button>
+        </div>
+        <div style="height: 250px; position: relative;"><canvas id="trendChart"></canvas></div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>💼 조직별 인원 구성 현황 (당월 기준)</span>
+          <button class="btn btn-sm btn-light border" onclick="toggleDebug('homeDebug')">MoM 로그 보기</button>
+        </div>
+        <div class="card-body p-0 table-container">
+          <div id="homeDebug" class="debug-box m-3"></div>
+          <table class="table mb-0 text-center align-middle" style="min-width: 900px;">
+            <thead class="table-light">
+              <tr>
+                <th class="text-start ps-4">조직명 (클릭하여 차트 필터 적용)</th>
+                <th>총 인원수<br><small class="text-muted fw-normal">(전월 대비)</small></th>
+                <th>COS<br><small class="text-muted fw-normal">인원 (비중)</small></th>
+                <th>Shared<br><small class="text-muted fw-normal">인원 (비중)</small></th>
+                <th>SGA<br><small class="text-muted fw-normal">인원 (비중)</small></th>
+              </tr>
+            </thead>
+            <tbody id="pivotTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="orgDetailView" style="display:none;">
+      <div class="card p-0"><div class="table-container p-3"><table class="table table-bordered text-center align-middle mb-0" style="min-width: 1100px;"><thead class="table-light"><tr id="tlHeader1"></tr><tr id="tlHeader2"></tr></thead><tbody id="memberTable"></tbody></table></div></div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="listModal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title fw-bold" id="listModalTitle"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><ul class="list-group" id="listModalBody"></ul></div></div></div></div>
+  
+  <div id="globalDebugPanel" style="display: none; position: fixed; bottom: 0; left: 250px; right: 0; height: 200px; background: #0f172a; color: #10b981; overflow-y: auto; z-index: 9999; padding: 15px; font-family: monospace; font-size: 0.85rem; border-top: 3px solid #3b82f6;">
+    <div class="d-flex justify-content-between mb-2">
+      <span class="text-white fw-bold">🛠 전역 디버그 로그</span>
+      <button class="btn btn-sm btn-outline-light" onclick="toggleGlobalDebug()">닫기</button>
+    </div>
+    <div id="globalDebugContent">디버그 창이 활성화되었습니다.<br></div>
+  </div>
+
+  <div class="modal fade" id="pastModal"><div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title fw-bold" id="pastModalTitle">과거 투입 내역</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+
+    <div class="modal-body">
+      <div id="pastModalBody"></div>
+      <button class="btn btn-sm btn-light w-100 mt-3" onclick="toggleDebug('pastDebug')">디버그 로그 확인</button>
+      <div id="pastDebug" class="debug-box mt-2"></div>
+    </div>
+  </div></div></div>
+  
+ <div class="modal fade" id="planModal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold" id="planModalTitle">📝 투입 현황 및 계획 등록</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="planCurrentInfo" class="mb-4"></div>
+          <button class="btn btn-sm btn-light w-100 mb-3" onclick="toggleDebug('planDebug')">디버그 로그 확인</button>
+          <div id="planDebug" class="debug-box mb-3"></div>
+          <hr>
+          <h6 class="fw-bold mb-3 text-primary">+ 추가 계획 등록</h6>
+          
+          <form id="planForm">
+            <input type="hidden" id="mdlEmpId">
+          
+            <div class="row mb-3">
+              <div class="col-6">
+                <label class="small text-muted mb-1">시작 연월</label>
+                <div class="d-flex gap-1">
+                  <input type="number" id="mdlStartY" class="form-control" required>
+                  <input type="number" id="mdlStartM" class="form-control" required>
+                </div>
+              </div>
+              
+              <div class="col-6">
+                <label class="small text-muted mb-1">종료 연월</label>
+                <div class="d-flex gap-1">
+                  <input type="number" id="mdlEndY" class="form-control" required>
+                  <input type="number" id="mdlEndM" class="form-control" required>
+                </div>
+              </div>
+            </div>
+              
+            <div class="mb-3">
+              <label class="small text-muted mb-1">사업 기회 / 프로젝트명</label>
+              <input type="text" id="mdlProj" class="form-control" required>
+            </div>
+
+            <div class="row mb-3">
+              <div class="col-6">
+                <label class="small text-muted mb-1">WBS 코드</label>
+                <input type="text" id="mdlWbs" class="form-control" placeholder="F-00000-00">
+              </div>
+              <div class="col-6">
+                <label class="small text-muted mb-1">월별 투입 공수 (MM)</label>
+                <input type="number" id="mdlMM" class="form-control" step="0.1" required>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary w-100 fw-bold" onclick="submitPlan()">계획 저장</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    Chart.register(ChartDataLabels);
+
+    let currentPath = {};
+    let globalChartData = null;
+    let myChart = null;
+    let currentFilterOrg = '전사';
+    
+    let fullTreeData = {}; // 백엔드에서 받은 전체 트리 보관용
+    let activeSegment = '전체';
+
+    window.onload = () => {
+      initDateSelectors();
+      google.script.run
+        .withSuccessHandler(res => {
+          document.getElementById('selYear').value = res.latestYear;
+          document.getElementById('selMonth').value = res.latestMonth;
+          
+          fullTreeData = res.fullTree; // 🌟 전체 트리 캐싱
+          renderSidebarTree(); // 사이드바 그리기
+          loadData();
+        })
+        .withFailureHandler(err => {
+          console.error("초기 데이터 로딩 에러:", err);
+          alert("초기 데이터를 불러오는 데 실패했습니다.");
+        })
+        .getInitialData(); // <--- 원래대로 복구!
+    };
+
+    function initDateSelectors() {
+      const cy = new Date().getFullYear();
+      let yHtml = '', mHtml = '';
+      for(let i=cy-2; i<=cy+2; i++) yHtml += `<option value="${i}">${i}년</option>`;
+      for(let i=1; i<=12; i++) mHtml += `<option value="${i}">${i}월</option>`;
+      document.getElementById('selYear').innerHTML = yHtml; document.getElementById('selMonth').innerHTML = mHtml;
+    }
+
+    function loadData() {
+      document.getElementById('orgDetailView').style.display === 'block' 
+        ? showOrgDetail(currentPath.name, currentPath.level, currentPath.val) 
+        : showHome();
+    }
+
+    function toggleDebug(id) {
+      const el = document.getElementById(id);
+      el.style.display = el.style.display === 'block' ? 'none' : 'block';
+    }
+
+    // 🌟 세그먼트 변경
+    function applySegment(deptName, btnElem) {
+      activeSegment = deptName;
+      document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+      btnElem.classList.add('active');
+      renderSidebarTree();
+    }
+
+    // 🌟 필터에 맞게 사이드바 동적 렌더링
+    function renderSidebarTree() {
+      const container = document.getElementById('orgTree');
+      container.innerHTML = '';
+      
+      let targetTree = {};
+      if (activeSegment === '전체') {
+        for(let dept in fullTreeData) {
+          for(let div in fullTreeData[dept]) {
+            if(!targetTree[div]) targetTree[div] = {};
+            for(let unit in fullTreeData[dept][div]) {
+              if(!targetTree[div][unit]) targetTree[div][unit] = [];
+              targetTree[div][unit].push(...fullTreeData[dept][div][unit]);
+            }
+          }
+        }
+      } else {
+        targetTree = fullTreeData[activeSegment] || {};
+      }
+
+      for (const div in targetTree) {
+        if(div === '-') continue;
+        const section = document.createElement('div');
+        section.className = 'section-header'; section.innerText = div;
+        container.appendChild(section);
+        
+        for (const unit in targetTree[div]) {
+          const unitDiv = document.createElement('div');
+          unitDiv.className = 'nav-link fw-bold'; unitDiv.innerHTML = `📂 ${unit}`;
+          unitDiv.onclick = () => showOrgDetail(unit, 'unit', unit);
+          container.appendChild(unitDiv);
+          
+          const teamBox = document.createElement('div');
+          teamBox.className = 'tree-unit';
+          targetTree[div][unit].forEach(team => {
+            if(team === '-') return;
+            const tDiv = document.createElement('div');
+            tDiv.className = 'tree-team d-flex align-items-center';
+            tDiv.innerHTML = `<span style="font-size:10px; margin-right:5px">●</span> ${team}`;
+            tDiv.onclick = () => showOrgDetail(team, 'team', team);
+            teamBox.appendChild(tDiv);
+          });
+          container.appendChild(teamBox);
+        }
+      }
+    }
+
+    function showView(id) {
+      ['homeView', 'orgDetailView'].forEach(v => document.getElementById(v).style.display = v === id ? 'block' : 'none');
+    }
+
+    function showHome() { 
+      document.getElementById('pageTitle').innerText = '홈 대시보드'; showView('homeView'); 
+      const y = document.getElementById('selYear').value, m = document.getElementById('selMonth').value;
+      
+      google.script.run.withSuccessHandler(stats => {
+        globalChartData = stats;
+        updateChart();
+        
+        document.getElementById('homeDebug').innerText = stats.debugLogs.join('\n'); // 🌟 MoM 로그 노출
+        
+        let pivotHtml = '';
+        stats.pivotTable.forEach(n => {
+          let isRoot = n.level === 0;
+          let display = isRoot ? 'table-row' : 'none'; 
+          let icon = n.level < 3 ? `<span class="toggle-icon fw-bold" onclick="togglePivot(event, '${n.id}')">▶</span>` : `<span style="display:inline-block; width:24px;"></span>`;
+          let indent = n.level * 20;
+
+          let pctC = n.curr.t > 0 ? Math.round((n.curr.c / n.curr.t)*100) : 0;
+          let pctSh = n.curr.t > 0 ? Math.round((n.curr.sh / n.curr.t)*100) : 0;
+          let pctSg = n.curr.t > 0 ? Math.round((n.curr.sg / n.curr.t)*100) : 0;
+
+          let diffT = n.curr.t - n.prev.t; let diffC = n.curr.c - n.prev.c;
+          let diffSh = n.curr.sh - n.prev.sh; let diffSg = n.curr.sg - n.prev.sg;
+
+          let fDiff = (d) => d > 0 ? `<span class="text-danger small ms-1">▲${d}</span>` : (d < 0 ? `<span class="text-primary small ms-1">▼${Math.abs(d)}</span>` : `<span class="text-muted small ms-1">-</span>`);
+
+          let cLink = n.curr.c > 0 ? `<span class="sga-count" onclick='openListModal(event, "${n.name} COS", ${JSON.stringify(n.curr.cL)})'>${n.curr.c}</span>` : '0';
+          let shLink = n.curr.sh > 0 ? `<span class="sga-count" onclick='openListModal(event, "${n.name} Shared", ${JSON.stringify(n.curr.shL)})'>${n.curr.sh}</span>` : '0';
+          let sgLink = n.curr.sg > 0 ? `<span class="sga-count" onclick='openListModal(event, "${n.name} SGA", ${JSON.stringify(n.curr.sgL)})'>${n.curr.sg}</span>` : '0';
+
+          pivotHtml += `
+            <tr class="pivot-row pivot-level-${n.level} pivot-parent-${n.parentId || 'root'}" id="pivot-${n.id}" data-id="${n.id}" data-expanded="false" style="display:${display}; border-bottom:1px solid #f1f5f9;">
+              <td class="text-start" style="padding-left: ${15 + indent}px;">
+                ${icon} <span class="${n.level < 2 ? 'fw-bold' : ''} org-link" onclick="applyChartFilter('${n.name}')">${n.name}</span>
+              </td>
+              <td><span class="fw-bold">${n.curr.t}</span><br>${fDiff(diffT)}</td>
+              <td>${cLink} <span class="small text-muted">(${pctC}%)</span><br>${fDiff(diffC)}</td>
+              <td>${shLink} <span class="small text-muted">(${pctSh}%)</span><br>${fDiff(diffSh)}</td>
+              <td>${sgLink} <span class="small text-muted">(${pctSg}%)</span><br>${fDiff(diffSg)}</td>
+            </tr>
+          `;
+        });
+        document.getElementById('pivotTableBody').innerHTML = pivotHtml;
+
+      }).getHomeDashboardData(y, m);
+    }
+
+    function togglePivot(e, id) {
+      if(e) e.stopPropagation();
+      let row = document.getElementById('pivot-' + id);
+      if (!row) return;
+      let isExpanded = row.getAttribute('data-expanded') === 'true';
+      row.setAttribute('data-expanded', !isExpanded);
+      let icon = row.querySelector('.toggle-icon');
+      if (icon) icon.innerText = isExpanded ? '▼' : '▶';
+
+      if (isExpanded) hideDescendants(id);
+      else showImmediateChildren(id);
+    }
+
+    function hideDescendants(parentId) {
+      document.querySelectorAll('.pivot-parent-' + parentId).forEach(child => {
+          child.style.display = 'none';
+          child.setAttribute('data-expanded', 'false');
+          let icon = child.querySelector('.toggle-icon');
+          if(icon) icon.innerText = '▶';
+          hideDescendants(child.getAttribute('data-id')); 
+      });
+    }
+
+    function showImmediateChildren(parentId) {
+      document.querySelectorAll('.pivot-parent-' + parentId).forEach(child => child.style.display = 'table-row');
+    }
+
+    function applyChartFilter(orgName) {
+      currentFilterOrg = orgName;
+      document.getElementById('currentChartFilterLabel').innerText = orgName;
+      updateChart();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function updateChart() {
+      if(!globalChartData) return;
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      if(myChart) myChart.destroy();
+      
+      const data = globalChartData.trendData[currentFilterOrg] || new Array(10).fill(0);
+      
+      myChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: globalChartData.timelineLabels,
+          datasets: [{
+            label: `${currentFilterOrg} 투입률(%)`, data: data,
+            borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderWidth: 2, pointRadius: 4, pointBackgroundColor: '#fff', fill: true, tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, layout: { padding: { top: 25 } },
+          scales: { y: { beginAtZero: true, suggestedMax: 100, ticks: { callback: v => v + '%' } } },
+          plugins: { 
+            legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw + '%' } },
+            datalabels: { align: 'top', anchor: 'end', color: '#3b82f6', font: { weight: 'bold', size: 12 }, formatter: (value) => value > 0 ? value + '%' : '' }
+          }
+        }
+      });
+    }
+
+    function openListModal(e, title, list) {
+      if(e) e.stopPropagation(); 
+      document.getElementById('listModalTitle').innerText = title;
+      document.getElementById('listModalBody').innerHTML = list.map(i => `<li class="list-group-item d-flex justify-content-between"><span>${i.name} <small class="text-muted">(${i.pos})</small></span></li>`).join('');
+      new bootstrap.Modal(document.getElementById('listModal')).show();
+    }
+
+    function showOrgDetail(name, level, val) {
+      currentPath = { name, level, val };
+      document.getElementById('pageTitle').innerText = `${name} 투입 현황`;
+      showView('orgDetailView');
+      const y = document.getElementById('selYear').value, m = document.getElementById('selMonth').value;
+
+      // 1. 로딩 스피너 먼저 띄우기
+      document.getElementById('memberTable').innerHTML = '<tr><td colspan="15"><div class="spinner-border text-primary my-3"></div><br>데이터 로딩 중...</td></tr>';
+
+      // 2. 서버 데이터 요청
+      google.script.run
+        .withSuccessHandler(res => {
+          // 🌟 colspan을 10에서 12로 변경 (1월~12월)
+          document.getElementById('tlHeader1').innerHTML = `
+            <th rowspan="2" style="width: 80px;">이름</th>
+            <th rowspan="2" style="width: 80px;">등급(직급)</th>
+            <th rowspan="2" style="width: 50px;">구분</th>
+            <th rowspan="2" style="width: 70px;">WBS</th>
+            <th rowspan="2" style="width: 180px;">프로젝트명</th>
+            <th colspan="12">2026년 월별 투입 상세 (MM)</th>`; // 🌟 colspan: 12
+            
+          document.getElementById('tlHeader2').innerHTML = res.timeline.map(t => {
+            // 2026년 고정이므로 offset에 따라 당월/예정 색상 유지
+            const bg = t.offset === 0 ? 'bg-primary text-white' : (t.offset < 0 ? 'bg-light' : '');
+            const label = t.offset === 0 ? '당월' : (t.offset < 0 ? '확정' : '예정');
+            return `<th class="${bg}" style="min-width: 60px;"><small>${t.label}</small><br><span style="font-size:0.7rem">${label}</span></th>`;
+          }).join('');
+
+          let html = '';
+          const groupOrder = ['COS - 투입 확정', 'COS - 부분 투입', 'COS - 투입 예정', 'COS - 미투입', 'Shared', '휴직', 'SGA', '전출/퇴직'];
+
+          groupOrder.forEach(type => {
+            if (!res.grouped[type]) return;
+            const members = res.grouped[type];
+            
+            let headerClass = "";
+            if (type === '전출/퇴직') headerClass = "header-out";
+            else if (type === 'Shared') headerClass = "header-shared";
+            else if (type === '휴직') headerClass = "header-leave";
+            else if (type === 'SGA') headerClass = "header-sga";
+            else headerClass = "header-cos";
+            
+            // 🌟 colspan을 전체 열 개수인 15로 변경하여 헤더 배경/테두리 끊김 문제 해결!
+            html += `<tr><td colspan="17" class="${headerClass} fw-bold text-start ps-3">📑 ${type} (${members.length}명)</td></tr>`;
+            
+            members.forEach(m => {
+              // 1) 확정(실적) 행 생성
+              const confirmedCells = m.timelineMM.map(tm => {
+                const isNoHR = (tm.confirmed === null); // 재직 모수 없음
+                
+                // 🌟 [수정] 재직 모수가 없으면 '-', 있으면 0.0 포함 숫자 표시
+                const val = isNoHR ? '-' : tm.confirmed.toFixed(1);
+                const cellClass = isNoHR ? "bg-light text-muted" : "cell-past text-primary";
+                
+                // 재직 모수가 있는 경우에만 클릭 이벤트(상세 조회) 부여
+                const clickEvt = isNoHR ? "" : `onclick="openPast('${m.empId}', '${m.name}', ${tm.year}, ${tm.month})"`;
+                
+                return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
+              }).join('');
+
+              // 2) 계획(FCST) 행 생성
+              const plannedCells = m.timelineMM.map(tm => {
+                const isNoHR = (tm.planned === null); // 재직 모수 없음
+                
+                // 🌟 [수정] Shared 배지 우선 -> 재직 모수 없으면 '-' -> 있으면 0.0 포함 숫자 표시
+                let val = (type === 'Shared' && tm.offset >= 0) ? 
+                  '<span class="badge bg-secondary">Shared</span>' : 
+                  (isNoHR ? '-' : tm.planned.toFixed(1));
+                
+                const isRestrictedType = (type === 'SGA' || type === '전출/퇴직');
+                const isFull = (tm.total >= 1.0);
+                const isReadOnly = isRestrictedType || isFull;
+
+                // 재직 모수가 없으면 연하게, 있으면 상태별 클래스 적용
+                let cellClass = isNoHR ? "bg-light text-muted" : 
+                  (tm.offset < 0 ? 'cell-past' : (tm.offset === 0 ? 'cell-current cell-future' : 'cell-future'));
+                
+                // 🌟 [수정] 재직 모수가 있는 '0' 또는 '숫자' 셀은 당월 이후에도 클릭하여 계획 입력 가능
+                let clickEvt = "";
+                if (!isNoHR) {
+                  clickEvt = `onclick="openPlan('${m.empId}', '${m.name}', ${tm.year}, ${tm.month}, ${isReadOnly})"`;
+                }
+
+                return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
+              }).join('');
+
+              const noLabelGroups = ['전출/퇴직', '휴직', 'SGA'];
+              const statusLabelHtml = noLabelGroups.includes(type) ? '' : `<small class="text-muted" style="font-size:11px">${m.statusLabel}</small>`;
+              const nameColor = type === '전출/퇴직' ? 'text-secondary' : 'fw-bold';
+
+              html += `
+                <tr style="border-top: 2px solid #dee2e6;">
+                  <td rowspan="2" class="align-middle">
+                    <span class="${nameColor}">${m.name}</span><br>${statusLabelHtml}
+                  </td>
+                  <td rowspan="2" class="align-middle">
+                    ${m.grade}<br><small class="text-muted">${m.pos}</small>
+                  </td>
+                  <td class="small fw-bold text-primary bg-light" style="font-size: 11px;">확정</td>
+                  <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.confWbsFull}">${m.confWbsShort}</td>
+                  <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.confProjFull}">${m.confProjShort}</td>
+                  ${confirmedCells}
+                </tr>
+                <tr>
+                  <td class="small fw-bold text-success bg-light" style="font-size: 11px;">계획</td>
+                  <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.planWbsFull}">${m.planWbsShort}</td>
+                  <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.planProjFull}">${m.planProjShort}</td>
+                  ${plannedCells}
+                </tr>`;
+            });
+          });
+          
+          document.getElementById('memberTable').innerHTML = html;
+        })
+        .withFailureHandler(err => {
+          document.getElementById('memberTable').innerHTML = `<tr><td colspan="15" class="text-danger fw-bold py-5">데이터 로딩 중 오류가 발생했습니다.<br><small>${err.message}</small></td></tr>`;
+          console.error("서버 에러:", err);
+        })
+        .getOrgResources({ [level]: val }, 2026, 1); // 🌟 호출 시 연도 고정
+    }
+
+    function openPast(empId, name, y, m) {
+      document.getElementById('pastModalTitle').innerText = `🔍 ${name}님의 ${y}년 ${m}월 투입 내역`;
+      document.getElementById('pastModalBody').innerHTML = '<div class="text-center spinner-border text-primary my-3"></div>';
+      document.getElementById('pastDebug').style.display = 'none';
+      new bootstrap.Modal(document.getElementById('pastModal')).show();
+      
+      google.script.run.withSuccessHandler(data => {
+        document.getElementById('pastDebug').innerText = data.debugLogs.join('\n'); // 🌟 디버그 로그 반영
+        
+        let html = `<h6 class="fw-bold mb-3">${y}년 ${m}월 | ${name}님 실적</h6>`;
+        const list = [...data.execs, ...data.mms];
+        if(list.length === 0) html += `<div class="text-muted">투입 실적이 없습니다.</div>`;
+        else html += `<ul class="list-group">` + list.map(l => `<li class="list-group-item d-flex justify-content-between align-items-center"><span class="small">${l.proj}</span><span class="badge bg-primary">${l.mm.toFixed(1)}</span></li>`).join('') + `</ul>`;
+        document.getElementById('pastModalBody').innerHTML = html;
+      }).getCellDetails(empId, y, m);
+    }
+
+    function openPlan(empId, name, y, m, isReadOnly) {
+      // 1. 모달 제목 동적 변경 (요청하신 형식)
+      const titleEl = document.getElementById('planModalTitle');
+      if (titleEl) titleEl.innerText = `📝 ${name}님의 ${y}년 ${m}월 투입 현황${isReadOnly ? ' (조회 전용)' : ' 및 계획'}`;
+
+      document.getElementById('planCurrentInfo').innerHTML = '<div class="text-center spinner-border text-primary my-3"></div>';
+      document.getElementById('planDebug').style.display = 'none';
+      
+      // 폼 초기화
+      document.getElementById('mdlEmpId').value = empId;
+      document.getElementById('mdlStartY').value = y; document.getElementById('mdlStartM').value = m;
+      document.getElementById('mdlEndY').value = y; document.getElementById('mdlEndM').value = m;
+      document.getElementById('mdlProj').value = ''; document.getElementById('mdlMM').value = '';
+      
+      // 2. 🌟 읽기 전용일 때 입력 폼과 하단 버튼 숨기기
+      const form = document.getElementById('planForm');
+      const footer = document.querySelector('#planModal .modal-footer');
+      const subTitle = document.querySelector('#planModal .modal-body h6'); // '+ 추가 계획 등록' 제목
+      const hrLine = document.querySelector('#planModal .modal-body hr');   // 구분선
+
+      if (isReadOnly) {
+        if(form) form.style.display = 'none';
+        if(footer) footer.style.display = 'none';
+        if(subTitle) subTitle.style.display = 'none';
+        if(hrLine) hrLine.style.display = 'none';
+      } else {
+        if(form) form.style.display = 'block';
+        if(footer) footer.style.display = 'block';
+        if(subTitle) subTitle.style.display = 'block';
+        if(hrLine) hrLine.style.display = 'block';
+      }
+
+      new bootstrap.Modal(document.getElementById('planModal')).show();
+      
+      google.script.run.withSuccessHandler(data => {
+        document.getElementById('planDebug').innerText = data.debugLogs.join('\n');
+        
+        let html = `<div class="text-muted small mb-2">${y}년 ${m}월 | 현재 투입 상세 내역</div>`;
+        const list = [...data.execs, ...data.mms, ...data.plans];
+        if(list.length === 0) html += `<div class="text-muted small">입력된 현황이 없습니다.</div>`;
+        else html += `<ul class="list-group">` + list.map(l => `<li class="list-group-item py-1 d-flex justify-content-between align-items-center"><span class="small">${l.proj}</span><span class="badge bg-secondary">${l.mm.toFixed(1)}</span></li>`).join('') + `</ul>`;
+        document.getElementById('planCurrentInfo').innerHTML = html;
+      }).getCellDetails(empId, y, m);
+    }
+
+    function submitPlan() {
+      const payload = {
+        empId: document.getElementById('mdlEmpId').value, 
+        empName: "UI", // (이 부분은 기존 코드 유지)
+        startY: document.getElementById('mdlStartY').value, 
+        startM: document.getElementById('mdlStartM').value,
+        endY: document.getElementById('mdlEndY').value, 
+        endM: document.getElementById('mdlEndM').value,
+        proj: document.getElementById('mdlProj').value,
+        wbs: document.getElementById('mdlWbs').value || '-',
+        mm: document.getElementById('mdlMM').value
+      };
+      
+      if(!payload.proj || !payload.mm) return alert('프로젝트명과 공수를 입력하세요.');
+      
+      const btn = document.querySelector('#planModal .btn-primary');
+      btn.innerText = "저장 중..."; btn.disabled = true;
+      
+      google.script.run
+        .withSuccessHandler(msg => { 
+          // 정상 저장 시 모달 닫기 및 새로고침
+          bootstrap.Modal.getInstance(document.getElementById('planModal')).hide();
+          loadData(); 
+          btn.innerText = "계획 저장"; btn.disabled = false;
+        })
+        .withFailureHandler(err => {
+          // 🚨 서버(code.gs)에서 에러를 던진 경우, 사용자에게 팝업으로 알림
+          alert("저장 불가 🚫\n\n" + err.message);
+          // 버튼 상태 원상 복구 (다시 수정해서 저장할 수 있도록 함)
+          btn.innerText = "계획 저장"; btn.disabled = false;
+        })
+        .saveBulkPlan(payload);
+    }
+
+    // 🌟 글로벌 디버그 토글 및 로깅 함수
+    function toggleGlobalDebug() {
+      const panel = document.getElementById('globalDebugPanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function logDebug(message) {
+      const content = document.getElementById('globalDebugContent');
+      const time = new Date().toLocaleTimeString();
+      let logMsg = typeof message === 'object' ? JSON.stringify(message, null, 2) : message;
+      content.innerHTML += `<div style="margin-bottom: 5px; border-bottom: 1px solid #334155; padding-bottom: 5px;">[${time}] ${logMsg}</div>`;
+      // 스크롤을 항상 최하단으로 유지
+      const panel = document.getElementById('globalDebugPanel');
+      panel.scrollTop = panel.scrollHeight;
+      console.log(`[DEBUG]`, message); // 브라우저 콘솔에도 동시 출력
+    }
+
+    function handlePlanSave() {
+      const payload = getPayloadFromModal();
+      
+      // 1. UI 즉시 반영 (Optimistic Update)
+      // 현재 보고 있는 리스트에 임시로 데이터를 끼워넣음
+      const tempId = Date.now();
+      const optimisticRow = { ...payload, id: tempId, status: 'pending' };
+      
+      // 전역 변수에 저장된 현재 데이터를 업데이트하고 테이블 리렌더링
+      allDataRows.push(optimisticRow); 
+      renderTable(allDataRows); 
+      
+      // 모달 닫기
+      bootstrap.Modal.getInstance(document.getElementById('planModal')).hide();
+      showToast("저장 요청을 보냈습니다.");
+
+      // 2. 실제 서버 통신 (백그라운드)
+      google.script.run
+        .withSuccessHandler(() => {
+          // 서버 저장 완료되면 'pending' 표시 제거 및 캐시 갱신(필요시)
+          showToast("서버 저장 완료", "success");
+          // 최신 데이터를 다시 불러와 싱크 맞춤
+          loadData(); 
+        })
+        .withFailureHandler(err => {
+          // 실패하면 끼워넣었던 데이터 삭제하고 에러 알림 (Rollback)
+          allDataRows = allDataRows.filter(r => r.id !== tempId);
+          renderTable(allDataRows);
+          alert("저장 실패: " + err.message);
+        })
+        .saveBulkPlan(payload);
+    }
+  </script>
+</body>
+</html>

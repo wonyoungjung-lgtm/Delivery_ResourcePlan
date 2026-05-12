@@ -35,6 +35,80 @@ function generateTimeline() {
   return timeline;
 }
 
+// 🌟 1. 청크 분할 캐싱 지원 (팀 데이터는 시트 백업 제외하여 속도 극대화)
+function setGlobalCache(key, obj) {
+  const jsonStr = JSON.stringify(obj);
+  const cache = CacheService.getScriptCache();
+  
+  // 1-1. 메모리 캐시 (가장 빠름)
+  try {
+    if (jsonStr.length < 90000) {
+      cache.put(key, jsonStr, 21600);
+      cache.remove(key + '_chunks');
+    } else {
+      const chunkSize = 90000;
+      const numChunks = Math.ceil(jsonStr.length / chunkSize);
+      for (let i = 0; i < numChunks; i++) {
+        cache.put(`${key}_${i}`, jsonStr.substring(i * chunkSize, (i + 1) * chunkSize), 21600);
+      }
+      cache.put(key + '_chunks', numChunks.toString(), 21600);
+    }
+  } catch(e) { console.error("Cache put error:", e); }
+  
+  // 🌟 [핵심 수정] 개별 팀 투입현황 데이터는 무거운 시트 백업을 생략함! (병목 완벽 제거)
+  if (key.startsWith('ORG_RES_')) {
+    return;
+  }
+  
+  // 1-2. 공통 글로벌 데이터만 시트 백업
+  const sheet = SS.getSheetByName('_DB_CACHE_') || SS.insertSheet('_DB_CACHE_');
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (data[i][0] === key) sheet.deleteRow(i + 1);
+  }
+  sheet.appendRow([key, jsonStr, new Date()]);
+}
+
+function getGlobalCache(key) {
+  const cache = CacheService.getScriptCache();
+  
+  // 2-1. 청크(쪼개진) 데이터 확인
+  const numChunksStr = cache.get(key + '_chunks');
+  if (numChunksStr) {
+    const numChunks = parseInt(numChunksStr, 10);
+    let fullStr = '';
+    for (let i = 0; i < numChunks; i++) {
+      const chunk = cache.get(`${key}_${i}`);
+      if (!chunk) break;
+      fullStr += chunk;
+    }
+    if (fullStr.length > 0) {
+      try { return JSON.parse(fullStr); } catch(e) {}
+    }
+  } else {
+    // 2-2. 단일 데이터 확인
+    const cachedStr = cache.get(key);
+    if (cachedStr) {
+      try { return JSON.parse(cachedStr); } catch(e) {}
+    }
+  }
+  
+  // 🌟 [핵심 수정] 개별 팀 투입현황은 시트에 없으므로 여기서 바로 종료 (시트 검색 지연 방지)
+  if (key.startsWith('ORG_RES_')) {
+    return null;
+  }
+
+  // 2-3. 공통 데이터의 경우 메모리에 없으면 시트에서 가져오기
+  const sheet = SS.getSheetByName('_DB_CACHE_');
+  if (!sheet) return null;
+  const row = sheet.getDataRange().getValues().find(r => r[0] === key);
+  if (row && row[1]) {
+    try { return JSON.parse(row[1]); } catch(e) {}
+  }
+  return null;
+}
+
+
 /**
  * 모든 데이터를 미리 계산하여 시트에 저장하는 함수
  * (트리거를 설정하여 10분마다 실행하거나, 데이터 저장 시마다 호출)
@@ -56,23 +130,6 @@ function rebuildPhysicalCache() {
   console.log("물리적 캐시 업데이트 완료");
 }
 
-/**
- * 캐시된 데이터를 가져오는 함수 (비약적으로 빠름)
- */
-function getCachedData(key) {
-  const sheet = SS.getSheetByName('_DB_CACHE_');
-  if (!sheet) return null;
-  
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === key) {
-      return JSON.parse(data[i][1]); // 계산 없이 JSON만 파싱해서 반환
-    }
-  }
-  return null;
-}
-
-
 function getInitialData() {
   const email = Session.getActiveUser().getEmail();
   
@@ -87,9 +144,8 @@ function getInitialData() {
     user.scope = { dept: userRow[4], div: userRow[5], unit: userRow[6], team: userRow[7] };
   }
 
-  // 2. 물리 캐시에서 공통 데이터(Dashboard, Tree, Filters) 가져오기
-  // 'GLOBAL_CACHE_2026'이라는 키로 통째로 저장된 데이터를 읽습니다.
-  let cachedFullData = getCachedData('GLOBAL_CACHE_2026');
+  // 2. 물리 캐시에서 공통 데이터 가져오기 (수정됨)
+  let cachedFullData = getGlobalCache('GLOBAL_CACHE_2026');
 
   // 3. 캐시가 없으면 (최초 실행 또는 캐시 만료 시) 생성 로직 실행
   if (!cachedFullData) {
@@ -142,49 +198,30 @@ function rebuildAndReturnCache() {
     orgFilters: orgFilters
   };
 
-  // 캐시 시트에 저장
-  saveToCacheSheet('GLOBAL_CACHE_2026', finalCache);
+  // 캐시 시트에 저장 (수정됨)
+  setGlobalCache('GLOBAL_CACHE_2026', finalCache);
   
   return finalCache;
 }
 
-function saveToCacheSheet(key, obj) {
-  const sheet = SS.getSheetByName('_DB_CACHE_') || SS.insertSheet('_DB_CACHE_');
-  const jsonStr = JSON.stringify(obj);
-  const now = new Date();
-  
-  // 기존 키 삭제 후 새로 삽입
-  const data = sheet.getDataRange().getValues();
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (data[i][0] === key) sheet.deleteRow(i + 1);
-  }
-  
-  sheet.appendRow([key, jsonStr, now]);
-}
-
-function getCachedData(key) {
-  const sheet = SS.getSheetByName('_DB_CACHE_');
-  if (!sheet) return null;
-  
-  const data = sheet.getDataRange().getValues();
-  const row = data.find(r => r[0] === key);
-  
-  if (row && row[1]) {
-    try {
-      return JSON.parse(row[1]);
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
-}
-
 /**
- * 최적화: 시트 데이터를 한 번만 읽어 전역 변수에 저장
+ * 최적화: 시트 데이터를 한 번만 읽어 전역 변수 및 2-Tier 캐시에 저장
  */
 function getGlobalData() {
+  // 1. 현재 실행 컨텍스트 내 메모리 캐시
   if (_cachedInputs && _cachedHR) return { inputs: _cachedInputs, hr: _cachedHR };
+  
+  const cacheKey = 'PARSED_RAW_DATA_2026';
+  
+  // 2. 글로벌 메모리/시트 캐시 조회
+  const cached = getGlobalCache(cacheKey);
+  if (cached) {
+    _cachedInputs = cached.inputs;
+    _cachedHR = cached.hr;
+    return cached;
+  }
 
+  // 3. 캐시가 없을 때만 시트에서 읽기 (최초 1회 실행)
   const targetYear = 2026;
   const sheets = {
     ex: SS.getSheetByName('투입실적_실행예산'),
@@ -193,35 +230,29 @@ function getGlobalData() {
     hr: SS.getSheetByName('HR_Report')
   };
 
-  // 모든 데이터를 한 번에 Get
   const rawEx = sheets.ex ? sheets.ex.getDataRange().getValues().slice(1) : [];
   const rawMm = sheets.mm ? sheets.mm.getDataRange().getValues().slice(1) : [];
   const rawFc = sheets.fc ? sheets.fc.getDataRange().getValues().slice(1) : [];
   const rawHr = sheets.hr ? sheets.hr.getDataRange().getValues().slice(1) : [];
 
-  // 1. Inputs 맵핑 (기존 getUnifiedInputs 로직을 인메모리 처리로 변경)
   const map = { exec: {}, mm: {}, plan: {} };
-  
   const process = (data, targetMap, mmCol, idCol, projCol, wbsCol) => {
-    for (let i = 0; i < data.length; i++) {
-      const r = data[i];
-      if (Number(r[0]) !== targetYear) continue;
+    data.forEach(r => {
+      if (Number(r[0]) !== targetYear) return;
       const key = `${r[0]}-${r[1]}-${String(r[idCol]).trim()}`;
       const val = parseFloat(r[mmCol] || 0);
-      if (val === 0) continue;
+      if (val === 0) return;
+      
       if (!targetMap[key]) targetMap[key] = { total: 0, details: [] };
       targetMap[key].total += val;
       targetMap[key].details.push({ proj: r[projCol], wbs: r[wbsCol] || '-', mm: val });
-    }
+    });
   };
 
   process(rawEx, map.exec, 2, 3, 6, 5);
   process(rawMm, map.mm, 2, 3, 6, 5);
   process(rawFc, map.plan, 5, 2, 4, 8);
   
-  _cachedInputs = map;
-
-  // 2. HR 데이터 인덱싱 (연-월별로 그룹화하여 필터링 속도 개선)
   const hrMap = {};
   rawHr.forEach(r => {
     if (Number(r[0]) !== targetYear || EXCLUDED_DEPTS.includes(r[8])) return;
@@ -229,7 +260,12 @@ function getGlobalData() {
     if (!hrMap[key]) hrMap[key] = [];
     hrMap[key].push(r);
   });
+
+  _cachedInputs = map;
   _cachedHR = hrMap;
+  
+  // 파싱된 전체 데이터를 캐시에 저장
+  setGlobalCache(cacheKey, { inputs: _cachedInputs, hr: _cachedHR });
 
   return { inputs: _cachedInputs, hr: _cachedHR };
 }
@@ -257,44 +293,6 @@ function buildFlatTree(data, user) {
     }
   }
   return tree;
-}
-
-// 🌟 2. 데이터 수집 시 2026년만 필터링하여 메모리 및 속도 최적화
-function getUnifiedInputs() {
-  const targetYear = 2026; // 🌟 2026년 데이터만 읽도록 고정
-  const ex = SS.getSheetByName('투입실적_실행예산') ? SS.getSheetByName('투입실적_실행예산').getDataRange().getValues().slice(1) : [];
-  const mm = SS.getSheetByName('투입실적_MM등록') ? SS.getSheetByName('투입실적_MM등록').getDataRange().getValues().slice(1) : [];
-  const fc = SS.getSheetByName('투입계획_FCST') ? SS.getSheetByName('투입계획_FCST').getDataRange().getValues().slice(1) : [];
-  
-  const map = { exec: {}, mm: {}, plan: {} };
-
-  function populate(dataArray, mapObj, mmCol, idCol, projCol, wbsCol) {
-    dataArray.forEach(r => {
-      // 🌟 연도 체크를 가장 먼저 수행하여 불필요한 연산 방지
-      if (Number(r[0]) !== targetYear) return;
-      
-      let y = Number(r[0]), m = Number(r[1]), id = String(r[idCol]).trim();
-      let val = parseFloat(r[mmCol] || 0);
-      if (val === 0) return;
-      
-      let key = `${y}-${m}-${id}`;
-      if (!mapObj[key]) mapObj[key] = { total: 0, details: [] };
-      mapObj[key].total += val;
-      mapObj[key].details.push({ 
-        proj: r[projCol], 
-        wbs: r[wbsCol] || '-', 
-        mm: val 
-      });
-    });
-  }
-  // 실적 시트들은 F열(5)이 WBS
-  populate(ex, map.exec, 2, 3, 6, 5); 
-  populate(mm, map.mm, 2, 3, 6, 5);
-  
-  // FCST 시트는 마지막 열(인덱스 8)에 WBS가 있다고 가정 (아래 saveBulkPlan에서 추가함)
-  populate(fc, map.plan, 5, 2, 4, 8); 
-
-  return map;
 }
 
 /**
@@ -407,7 +405,8 @@ function getHomeDashboardData(year, month) {
 
 // 🌟 배열 전체 스캔(filter) 제거, 캐싱된 Key로 즉시 조회
 function getCellDetails(empId, year, month) {
-  const inputs = getUnifiedInputs();
+  // 🌟 변경
+  const { inputs } = getGlobalData(); 
   const key = `${Number(year)}-${Number(month)}-${String(empId).trim()}`;
   
   let logs = [
@@ -423,29 +422,33 @@ function getCellDetails(empId, year, month) {
   };
 }
 
+
 /**
- * 조직 상세 뷰 데이터 조회 (시계열 10개월)
- * @param {Object} path - {div: "본부명", unit: "실명", team: "팀명"}
- * @param {Number} year - 조회 연도
- * @param {Number} month - 조회 월
+ * 조직 상세 뷰 데이터 조회 (계산된 결과 통째로 캐싱)
  */
-function getOrgResources(path, year, month) {
-  // year, month 매개변수가 오더라도 내부적으로 generateTimeline()이 2026년을 반환함
-  const timeline = generateTimeline(); 
-  const inputs = getUnifiedInputs();
-  const hrData = SS.getSheetByName('HR_Report').getDataRange().getValues().slice(1);
+function getOrgResources(path, year, month, forceRefresh = false) {
+  const pathLevel = path ? (Object.keys(path)[0] || '전사') : '전사';
+  const pathName = path ? (Object.values(path)[0] || '전사') : '전사';
+  const cacheKey = `ORG_RES_${year}_${month}_${pathLevel}_${pathName}`;
+
+  // 🌟 forceRefresh가 아닐 때만 캐시를 타도록 수정
+  if (!forceRefresh) {
+    const cachedResult = getGlobalCache(cacheKey);
+    if (cachedResult) {
+      return cachedResult;
+    }
+  }
+
+  // === 여기서부터 데이터 연산 시작 ===
+  const timeline = generateTimeline();
+  const { inputs, hr } = getGlobalData();
 
   const hrMap = {}; 
   const targetEmpIds = new Set();
   const targetYear = 2026;
 
-  hrData.forEach(r => {
-    if (EXCLUDED_DEPTS.includes(r[8])) return;
+  Object.values(hr).flat().forEach(r => {
     const y = Number(r[0]), m = Number(r[1]);
-    
-    // 🌟 2026년 데이터가 아니면 스킵
-    if (y !== targetYear) return; 
-    
     const key = `${y}-${m}`;
     const eId = String(r[3]).trim();
     const rec = {
@@ -461,7 +464,6 @@ function getOrgResources(path, year, month) {
     if (pathMatch(rec, path)) targetEmpIds.add(eId);
   });
 
-  // 🌟 2단계: 그룹 초기화 (요청하신 순서 및 명칭)
   const groups = { 
     'COS - 투입 확정': [], 
     'COS - 부분 투입': [], 
@@ -472,19 +474,16 @@ function getOrgResources(path, year, month) {
     'SGA': [], 
     '전출/퇴직': [] 
   };
-
   const currentKeyPrefix = `${Number(year)}-${Number(month)}`;
 
   targetEmpIds.forEach(id => {
     let currentHR = hrMap[`${currentKeyPrefix}-${id}`];
-    // 🌟 수정: path 인자 추가
     let isCurrentHere = pathMatch(currentHR, path); 
 
     let latestHR = currentHR;
     if (!latestHR) {
       for (let i = timeline.length - 1; i >= 0; i--) {
         let temp = hrMap[`${timeline[i].year}-${timeline[i].month}-${id}`];
-        // 🌟 수정: path 인자 추가
         if (pathMatch(temp, path)) { latestHR = temp; break; } 
       }
     }
@@ -493,20 +492,16 @@ function getOrgResources(path, year, month) {
     let m = { ...latestHR };
     m.statusLabel = isCurrentHere ? (m.date ? `발령일자: ${m.date}` : '') : `<span class="text-danger fw-bold">전출</span>`;
 
-    // 🌟 3단계: 10개월 타임라인별 MM 합계 산출 및 프로젝트명/WBS 수집
     let confProjs = new Set(), confWbs = new Set();
     let planProjs = new Set(), planWbs = new Set();
 
-
     m.timelineMM = timeline.map(t => {
       let tHR = hrMap[`${t.year}-${t.month}-${id}`];
-      // 🌟 수정: path 인자 추가
       if (!pathMatch(tHR, path)) return { year: t.year, month: t.month, offset: t.offset, confirmed: null, planned: null, total: null };
       
       let k = `${t.year}-${t.month}-${id}`;
       let eMM = 0, mMM = 0, pMM = 0;
-
-      // 1. 실행예산 (확정 데이터)
+      
       if (inputs.exec[k]) {
         eMM = inputs.exec[k].total;
         inputs.exec[k].details.forEach(d => { 
@@ -514,8 +509,6 @@ function getOrgResources(path, year, month) {
           if(d.wbs && d.wbs !== '-') confWbs.add(d.wbs);
         });
       }
-      
-      // 2. MM등록 (확정 데이터)
       if (inputs.mm[k]) {
         mMM = inputs.mm[k].total;
         inputs.mm[k].details.forEach(d => { 
@@ -523,8 +516,6 @@ function getOrgResources(path, year, month) {
           if(d.wbs && d.wbs !== '-') confWbs.add(d.wbs);
         });
       }
-      
-      // 3. FCST (계획 데이터)
       if (inputs.plan[k]) {
         pMM = inputs.plan[k].total;
         inputs.plan[k].details.forEach(d => { 
@@ -532,50 +523,28 @@ function getOrgResources(path, year, month) {
           if(d.wbs && d.wbs !== '-') planWbs.add(d.wbs);
         });
       }
-      
       return { 
-        year: t.year, 
-        month: t.month, 
-        offset: t.offset, 
-        confirmed: eMM + mMM, 
-        planned: pMM,
-        total: (eMM + mMM + pMM) 
+        year: t.year, month: t.month, offset: t.offset, 
+        confirmed: eMM + mMM, planned: pMM, total: (eMM + mMM + pMM) 
       };
     });
 
-    // 🌟 프로젝트/WBS 이름 축약 처리 (툴팁용 전체 텍스트와 화면용 축약 텍스트 분리)
     function getSummary(setObj) {
       if (setObj.size === 0) return { full: '-', short: '-' };
       const arr = Array.from(setObj);
-      return {
-        full: arr.join(', '), // 마우스 올렸을 때 볼 전체 내용
-        short: arr.length > 1 ? `${arr[0]} 외 ${arr.length - 1}건` : arr[0] // 화면에 보일 축약 내용
-      };
+      return { full: arr.join(', '), short: arr.length > 1 ? `${arr[0]} 외 ${arr.length - 1}건` : arr[0] };
     }
     
-    const confP = getSummary(confProjs);
-    m.confProjFull = confP.full; m.confProjShort = confP.short;
-    
-    const confW = getSummary(confWbs);
-    m.confWbsFull = confW.full; m.confWbsShort = confW.short;
-    
-    const planP = getSummary(planProjs);
-    m.planProjFull = planP.full; m.planProjShort = planP.short;
-    
-    const planW = getSummary(planWbs);
-    m.planWbsFull = planW.full; m.planWbsShort = planW.short;
+    const confP = getSummary(confProjs); m.confProjFull = confP.full; m.confProjShort = confP.short;
+    const confW = getSummary(confWbs); m.confWbsFull = confW.full; m.confWbsShort = confW.short;
+    const planP = getSummary(planProjs); m.planProjFull = planP.full; m.planProjShort = planP.short;
+    const planW = getSummary(planWbs); m.planWbsFull = planW.full; m.planWbsShort = planW.short;
 
-    // 🌟 4단계: 우선순위에 따른 섹션 분류
-    if (!isCurrentHere) {
-        groups['전출/퇴직'].push(m);
-    } else if (m.type === '휴직') {
-        groups['휴직'].push(m);
-    } else if (m.isTarget === 0) {
-        groups['SGA'].push(m);
-    } else if (m.type === 'Shared') {
-        groups['Shared'].push(m);
-    } else {
-        // COS 세부 분류
+    if (!isCurrentHere) { groups['전출/퇴직'].push(m); } 
+    else if (m.type === '휴직') { groups['휴직'].push(m); } 
+    else if (m.isTarget === 0) { groups['SGA'].push(m); } 
+    else if (m.type === 'Shared') { groups['Shared'].push(m); } 
+    else {
         let k = `${Number(year)}-${Number(month)}-${id}`;
         let eMM = (inputs.exec[k] ? inputs.exec[k].total : 0) + (inputs.mm[k] ? inputs.mm[k].total : 0);
         let pMM = inputs.plan[k] ? inputs.plan[k].total : 0;
@@ -587,14 +556,18 @@ function getOrgResources(path, year, month) {
     }
   });
 
-  // 인원이 없는 그룹은 UI에서 보이지 않도록 제거
   for(let g in groups) { if(groups[g].length === 0) delete groups[g]; }
 
-  return { timeline, grouped: groups };
+  const finalResult = { timeline, grouped: groups };
+
+  // 🌟 3. 연산이 끝난 최종 결과물을 캐시에 저장 (이후 동일 팀 조회 시 0초 컷)
+  setGlobalCache(cacheKey, finalResult);
+
+  return finalResult;
 }
 
 function saveBulkPlan(payload) {
-  const inputs = getUnifiedInputs(); // 🌟 기존 투입 데이터(확정+계획) 불러오기
+  const { inputs } = getGlobalData();
   const sheet = SS.getSheetByName('투입계획_FCST');
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   
@@ -647,9 +620,15 @@ function saveBulkPlan(payload) {
     ]);
     current.setMonth(current.getMonth() + 1);
   }
-  
+
   if (rowsToAppend.length > 0) {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, 9).setValues(rowsToAppend);
+    
+    // 🌟 추가: 데이터가 변경되었으므로 글로벌 캐시 즉각 삭제 (무효화)
+    try {
+      CacheService.getScriptCache().remove('PARSED_RAW_DATA_2026');
+      CacheService.getScriptCache().remove('GLOBAL_CACHE_2026');
+    } catch(e) {}
   }
   
   return "저장되었습니다.";
@@ -670,4 +649,61 @@ function pathMatch(res, path) {
   
   // 현재 인력 정보(res)의 해당 레벨(div, unit, team) 값이 필터값과 일치하는지 확인
   return res[level] === val;
+}
+
+
+/**
+ * 🌟 트리거에 의해 백그라운드에서 주기적으로 실행될 캐시 강제 갱신 함수
+ */
+function forceRefreshCache() {
+  console.log("백그라운드 캐시 갱신 시작...");
+  
+  // 1. 공통 캐시 강제 삭제 (무효화)
+  try {
+    CacheService.getScriptCache().remove('PARSED_RAW_DATA_2026');
+    CacheService.getScriptCache().remove('GLOBAL_CACHE_2026');
+  } catch(e) {}
+  
+  // 2. 전역 변수 초기화
+  _cachedInputs = null;
+  _cachedHR = null;
+  
+  // 3. 최신 데이터 파싱 및 대시보드 갱신
+  getGlobalData();
+  const fullData = rebuildAndReturnCache();
+  
+  // =========================================================
+  // 🌟 [핵심 추가] 모든 본부/실/팀의 데이터를 미리 계산해서 캐시에 굽기
+  // =========================================================
+  const targetYear = 2026;
+  const targetMonth = 5; // 당월 기준
+  const tree = fullData.fullTree;
+  
+  // '전사' 전체 캐시 굽기 (forceRefresh = true)
+  getOrgResources(null, targetYear, targetMonth, true);
+
+  for (let dept in tree) {
+    for (let div in tree[dept]) {
+      if (div !== '-') {
+        // 본부 단위 캐시 굽기
+        getOrgResources({ div: div }, targetYear, targetMonth, true);
+      }
+      
+      for (let unit in tree[dept][div]) {
+        if (unit !== '-' && unit !== '(실 미소속)') {
+          // 실 단위 캐시 굽기
+          getOrgResources({ unit: unit }, targetYear, targetMonth, true);
+        }
+        
+        tree[dept][div][unit].forEach(team => {
+          if (team !== '-') {
+            // 팀 단위 캐시 굽기
+            getOrgResources({ team: team }, targetYear, targetMonth, true);
+          }
+        });
+      }
+    }
+  }
+  
+  console.log("✅ 백그라운드 캐시 및 팀별 상세 현황 캐시 굽기 완료");
 }

@@ -445,125 +445,140 @@
       new bootstrap.Modal(document.getElementById('listModal')).show();
     }
 
+    // 🌟 전역 변수 선언부에 추가 (기존 전역 변수들 아래에 위치)
+    let teamDataCache = {}; 
+
+    // ==========================================
+    // 1. 조직 상세 뷰 데이터 호출 함수 (프론트 캐시 적용)
+    // ==========================================
     function showOrgDetail(name, level, val) {
       currentPath = { name, level, val };
       document.getElementById('pageTitle').innerText = `${name} 투입 현황`;
       showView('orgDetailView');
-      const y = document.getElementById('selYear').value, m = document.getElementById('selMonth').value;
+      
+      const y = document.getElementById('selYear').value;
+      const m = document.getElementById('selMonth').value;
+      
+      // 고유 캐시 키 (연도_월_레벨_부서명)
+      const cacheKey = `${y}_${m}_${level}_${val}`;
 
-      // 1. 로딩 스피너 먼저 띄우기
+      // 🌟 프론트엔드 캐시에 이미 데이터가 있다면 서버 통신 생략! (0초 렌더링)
+      if (teamDataCache[cacheKey]) {
+        renderMemberTable(teamDataCache[cacheKey]);
+        return;
+      }
+
+      // 프론트에 캐시가 없다면 로딩 스피너 띄우기
       document.getElementById('memberTable').innerHTML = '<tr><td colspan="15"><div class="spinner-border text-primary my-3"></div><br>데이터 로딩 중...</td></tr>';
 
-      // 2. 서버 데이터 요청
+      // 서버에 데이터 요청
       google.script.run
         .withSuccessHandler(res => {
-          // 🌟 colspan을 10에서 12로 변경 (1월~12월)
-          document.getElementById('tlHeader1').innerHTML = `
-            <th rowspan="2" style="width: 80px;">이름</th>
-            <th rowspan="2" style="width: 80px;">등급(직급)</th>
-            <th rowspan="2" style="width: 50px;">구분</th>
-            <th rowspan="2" style="width: 70px;">WBS</th>
-            <th rowspan="2" style="width: 180px;">프로젝트명</th>
-            <th colspan="12">2026년 월별 투입 상세 (MM)</th>`; // 🌟 colspan: 12
-            
-          document.getElementById('tlHeader2').innerHTML = res.timeline.map(t => {
-            // 2026년 고정이므로 offset에 따라 당월/예정 색상 유지
-            const bg = t.offset === 0 ? 'bg-primary text-white' : (t.offset < 0 ? 'bg-light' : '');
-            const label = t.offset === 0 ? '당월' : (t.offset < 0 ? '확정' : '예정');
-            return `<th class="${bg}" style="min-width: 60px;"><small>${t.label}</small><br><span style="font-size:0.7rem">${label}</span></th>`;
-          }).join('');
-
-          let html = '';
-          const groupOrder = ['COS - 투입 확정', 'COS - 부분 투입', 'COS - 투입 예정', 'COS - 미투입', 'Shared', '휴직', 'SGA', '전출/퇴직'];
-
-          groupOrder.forEach(type => {
-            if (!res.grouped[type]) return;
-            const members = res.grouped[type];
-            
-            let headerClass = "";
-            if (type === '전출/퇴직') headerClass = "header-out";
-            else if (type === 'Shared') headerClass = "header-shared";
-            else if (type === '휴직') headerClass = "header-leave";
-            else if (type === 'SGA') headerClass = "header-sga";
-            else headerClass = "header-cos";
-            
-            // 🌟 colspan을 전체 열 개수인 15로 변경하여 헤더 배경/테두리 끊김 문제 해결!
-            html += `<tr><td colspan="17" class="${headerClass} fw-bold text-start ps-3">📑 ${type} (${members.length}명)</td></tr>`;
-            
-            members.forEach(m => {
-              // 1) 확정(실적) 행 생성
-              const confirmedCells = m.timelineMM.map(tm => {
-                const isNoHR = (tm.confirmed === null); // 재직 모수 없음
-                
-                // 🌟 [수정] 재직 모수가 없으면 '-', 있으면 0.0 포함 숫자 표시
-                const val = isNoHR ? '-' : tm.confirmed.toFixed(1);
-                const cellClass = isNoHR ? "bg-light text-muted" : "cell-past text-primary";
-                
-                // 재직 모수가 있는 경우에만 클릭 이벤트(상세 조회) 부여
-                const clickEvt = isNoHR ? "" : `onclick="openPast('${m.empId}', '${m.name}', ${tm.year}, ${tm.month})"`;
-                
-                return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
-              }).join('');
-
-              // 2) 계획(FCST) 행 생성
-              const plannedCells = m.timelineMM.map(tm => {
-                const isNoHR = (tm.planned === null); // 재직 모수 없음
-                
-                // 🌟 [수정] Shared 배지 우선 -> 재직 모수 없으면 '-' -> 있으면 0.0 포함 숫자 표시
-                let val = (type === 'Shared' && tm.offset >= 0) ? 
-                  '<span class="badge bg-secondary">Shared</span>' : 
-                  (isNoHR ? '-' : tm.planned.toFixed(1));
-                
-                const isRestrictedType = (type === 'SGA' || type === '전출/퇴직');
-                const isFull = (tm.total >= 1.0);
-                const isReadOnly = isRestrictedType || isFull;
-
-                // 재직 모수가 없으면 연하게, 있으면 상태별 클래스 적용
-                let cellClass = isNoHR ? "bg-light text-muted" : 
-                  (tm.offset < 0 ? 'cell-past' : (tm.offset === 0 ? 'cell-current cell-future' : 'cell-future'));
-                
-                // 🌟 [수정] 재직 모수가 있는 '0' 또는 '숫자' 셀은 당월 이후에도 클릭하여 계획 입력 가능
-                let clickEvt = "";
-                if (!isNoHR) {
-                  clickEvt = `onclick="openPlan('${m.empId}', '${m.name}', ${tm.year}, ${tm.month}, ${isReadOnly})"`;
-                }
-
-                return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
-              }).join('');
-
-              const noLabelGroups = ['전출/퇴직', '휴직', 'SGA'];
-              const statusLabelHtml = noLabelGroups.includes(type) ? '' : `<small class="text-muted" style="font-size:11px">${m.statusLabel}</small>`;
-              const nameColor = type === '전출/퇴직' ? 'text-secondary' : 'fw-bold';
-
-              html += `
-                <tr style="border-top: 2px solid #dee2e6;">
-                  <td rowspan="2" class="align-middle">
-                    <span class="${nameColor}">${m.name}</span><br>${statusLabelHtml}
-                  </td>
-                  <td rowspan="2" class="align-middle">
-                    ${m.grade}<br><small class="text-muted">${m.pos}</small>
-                  </td>
-                  <td class="small fw-bold text-primary bg-light" style="font-size: 11px;">확정</td>
-                  <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.confWbsFull}">${m.confWbsShort}</td>
-                  <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.confProjFull}">${m.confProjShort}</td>
-                  ${confirmedCells}
-                </tr>
-                <tr>
-                  <td class="small fw-bold text-success bg-light" style="font-size: 11px;">계획</td>
-                  <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.planWbsFull}">${m.planWbsShort}</td>
-                  <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.planProjFull}">${m.planProjShort}</td>
-                  ${plannedCells}
-                </tr>`;
-            });
-          });
-          
-          document.getElementById('memberTable').innerHTML = html;
+          // 🌟 받아온 데이터를 프론트 캐시에 저장해두기
+          teamDataCache[cacheKey] = res; 
+          // 테이블 그리기
+          renderMemberTable(res);
         })
         .withFailureHandler(err => {
           document.getElementById('memberTable').innerHTML = `<tr><td colspan="15" class="text-danger fw-bold py-5">데이터 로딩 중 오류가 발생했습니다.<br><small>${err.message}</small></td></tr>`;
           console.error("서버 에러:", err);
         })
-        .getOrgResources({ [level]: val }, 2026, 1); // 🌟 호출 시 연도 고정
+        .getOrgResources({ [level]: val }, y, m); 
+    }
+
+    // ==========================================
+    // 2. 화면 렌더링 전용 함수 (기존 로직 분리)
+    // ==========================================
+    function renderMemberTable(res) {
+      document.getElementById('tlHeader1').innerHTML = `
+        <th rowspan="2" style="width: 80px;">이름</th>
+        <th rowspan="2" style="width: 80px;">등급(직급)</th>
+        <th rowspan="2" style="width: 50px;">구분</th>
+        <th rowspan="2" style="width: 70px;">WBS</th>
+        <th rowspan="2" style="width: 180px;">프로젝트명</th>
+        <th colspan="12">2026년 월별 투입 상세 (MM)</th>`; 
+        
+      document.getElementById('tlHeader2').innerHTML = res.timeline.map(t => {
+        const bg = t.offset === 0 ? 'bg-primary text-white' : (t.offset < 0 ? 'bg-light' : '');
+        const label = t.offset === 0 ? '당월' : (t.offset < 0 ? '확정' : '예정');
+        return `<th class="${bg}" style="min-width: 60px;"><small>${t.label}</small><br><span style="font-size:0.7rem">${label}</span></th>`;
+      }).join('');
+
+      let html = '';
+      const groupOrder = ['COS - 투입 확정', 'COS - 부분 투입', 'COS - 투입 예정', 'COS - 미투입', 'Shared', '휴직', 'SGA', '전출/퇴직'];
+
+      groupOrder.forEach(type => {
+        if (!res.grouped[type]) return;
+        const members = res.grouped[type];
+        
+        let headerClass = "";
+        if (type === '전출/퇴직') headerClass = "header-out";
+        else if (type === 'Shared') headerClass = "header-shared";
+        else if (type === '휴직') headerClass = "header-leave";
+        else if (type === 'SGA') headerClass = "header-sga";
+        else headerClass = "header-cos";
+        
+        html += `<tr><td colspan="17" class="${headerClass} fw-bold text-start ps-3">📑 ${type} (${members.length}명)</td></tr>`;
+        
+        members.forEach(m => {
+          // 확정(실적) 행 생성
+          const confirmedCells = m.timelineMM.map(tm => {
+            const isNoHR = (tm.confirmed === null); 
+            const val = isNoHR ? '-' : tm.confirmed.toFixed(1);
+            const cellClass = isNoHR ? "bg-light text-muted" : "cell-past text-primary";
+            const clickEvt = isNoHR ? "" : `onclick="openPast('${m.empId}', '${m.name}', ${tm.year}, ${tm.month})"`;
+            return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
+          }).join('');
+
+          // 계획(FCST) 행 생성
+          const plannedCells = m.timelineMM.map(tm => {
+            const isNoHR = (tm.planned === null); 
+            let val = (type === 'Shared' && tm.offset >= 0) ? 
+              '<span class="badge bg-secondary">Shared</span>' : 
+              (isNoHR ? '-' : tm.planned.toFixed(1));
+            
+            const isRestrictedType = (type === 'SGA' || type === '전출/퇴직');
+            const isFull = (tm.total >= 1.0);
+            const isReadOnly = isRestrictedType || isFull;
+
+            let cellClass = isNoHR ? "bg-light text-muted" : 
+              (tm.offset < 0 ? 'cell-past' : (tm.offset === 0 ? 'cell-current cell-future' : 'cell-future'));
+            
+            let clickEvt = "";
+            if (!isNoHR) {
+              clickEvt = `onclick="openPlan('${m.empId}', '${m.name}', ${tm.year}, ${tm.month}, ${isReadOnly})"`;
+            }
+
+            return `<td class="${cellClass}" ${clickEvt}>${val}</td>`;
+          }).join('');
+
+          const noLabelGroups = ['전출/퇴직', '휴직', 'SGA'];
+          const statusLabelHtml = noLabelGroups.includes(type) ? '' : `<small class="text-muted" style="font-size:11px">${m.statusLabel}</small>`;
+          const nameColor = type === '전출/퇴직' ? 'text-secondary' : 'fw-bold';
+
+          html += `
+            <tr style="border-top: 2px solid #dee2e6;">
+              <td rowspan="2" class="align-middle">
+                <span class="${nameColor}">${m.name}</span><br>${statusLabelHtml}
+              </td>
+              <td rowspan="2" class="align-middle">
+                ${m.grade}<br><small class="text-muted">${m.pos}</small>
+              </td>
+              <td class="small fw-bold text-primary bg-light" style="font-size: 11px;">확정</td>
+              <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.confWbsFull}">${m.confWbsShort}</td>
+              <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.confProjFull}">${m.confProjShort}</td>
+              ${confirmedCells}
+            </tr>
+            <tr>
+              <td class="small fw-bold text-success bg-light" style="font-size: 11px;">계획</td>
+              <td class="small text-muted align-middle" style="font-size: 11px;" title="${m.planWbsFull}">${m.planWbsShort}</td>
+              <td class="small text-start align-middle text-truncate" style="max-width: 180px; font-size: 11px;" title="${m.planProjFull}">${m.planProjShort}</td>
+              ${plannedCells}
+            </tr>`;
+        });
+      });
+      
+      document.getElementById('memberTable').innerHTML = html;
     }
 
     function openPast(empId, name, y, m) {
@@ -648,6 +663,9 @@
       
       google.script.run
         .withSuccessHandler(msg => { 
+          // 🌟 성공 시 프론트엔드 캐시 초기화 (다음 클릭 시 서버에서 최신 데이터 가져오도록)
+          teamDataCache = {}; 
+          
           // 정상 저장 시 모달 닫기 및 새로고침
           bootstrap.Modal.getInstance(document.getElementById('planModal')).hide();
           loadData(); 
